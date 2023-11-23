@@ -3282,7 +3282,7 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                                                                                                  // (eg Sphinx, invalid
                                                                                                  // packetsize, etc)
                         || (SQLServerException.ERROR_SOCKET_TIMEOUT == driverErrorCode // socket timeout
-                                && (!isDBMirroring || retryAttempt > 0)) // If mirroring, only close after failover has been tried (attempt >= 1)
+                                && ((!isDBMirroring || (retryAttempt > 0) && connectRetryCount != 0))) // If mirroring, only close after failover has been tried (attempt >= 1)
                         || timerHasExpired(timerExpire) || retryAttempt >= connectRetryCount
                 // for non-dbmirroring cases, do not retry after tcp socket connection succeeds
                 ) {
@@ -3371,6 +3371,7 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                                 + ". Wait for connectRetryInterval(" + connectRetryInterval + ")s before retry #"
                                 + retryAttempt);
                     }
+                    System.out.println("sleeping");
                     sleepInterval(TimeUnit.SECONDS.toMillis(connectRetryInterval));
                 }
             }
@@ -5950,6 +5951,8 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                             connectionlogger.fine(toString() + " SQLServerConnection.getFedAuthToken remaining: "
                                     + millisecondsRemaining + " milliseconds.");
                         }
+
+                        System.out.println("sleeping");
 
                         sleepInterval(sleepInterval);
                         sleepInterval = sleepInterval * 2;

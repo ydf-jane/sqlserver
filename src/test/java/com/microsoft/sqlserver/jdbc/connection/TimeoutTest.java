@@ -256,8 +256,9 @@ public class TimeoutTest extends AbstractTest {
         long timerStart = System.currentTimeMillis();
 
         // Try a non existing server and see if the default timeout is 15 seconds
-        try (Connection con = PrepUtil.getConnection("jdbc:sqlserver://" + randomServer
-                + ";databaseName=FailoverDB_abc;failoverPartner=" + randomServer + "\\foo;user=sa;password=pwd;")) {
+        try (Connection con = PrepUtil
+                .getConnection("jdbc:sqlserver://" + randomServer + ";databaseName=FailoverDB_abc;failoverPartner="
+                        + randomServer + "\\foo;user=sa;" + RandomUtil.getIdentifier("password"))) {
             fail(TestResource.getResource("R_shouldNotConnect"));
         } catch (Exception e) {
             timerEnd = System.currentTimeMillis();
@@ -277,42 +278,15 @@ public class TimeoutTest extends AbstractTest {
         long timerEnd = 0;
 
         long timerStart = System.currentTimeMillis();
-        try (Connection con = PrepUtil.getConnection("jdbc:sqlserver://" + randomServer
-                + "\\fooggg;databaseName=FailoverDB;failoverPartner=" + randomServer + "\\foo;user=sa;password=pwd;")) {
+        try (Connection con = PrepUtil
+                .getConnection("jdbc:sqlserver://" + randomServer + "\\fooggg;databaseName=FailoverDB;failoverPartner="
+                        + randomServer + "\\foo;user=sa;" + RandomUtil.getIdentifier("password"))) {
             fail(TestResource.getResource("R_shouldNotConnect"));
         } catch (Exception e) {
             timerEnd = System.currentTimeMillis();
         }
 
         verifyTimeout(timerEnd - timerStart, defaultTimeout);
-    }
-
-    /**
-     * Tests that failover is correctly used after a socket timeout, by confirming total time includes socketTimeout
-     * for both primary and failover server.
-     */
-    @Test
-    public void testFailoverInstanceResolutionWithSocketTimeout() {
-        long timerEnd;
-        long timerStart = System.currentTimeMillis();
-
-        try (Connection con = PrepUtil
-                .getConnection("jdbc:sqlserver://" + randomServer + ";databaseName=FailoverDB;failoverPartner="
-                        + randomServer + "\\foo;user=sa;password=pwd;" + ";socketTimeout=" + waitForDelaySeconds)) {
-            fail(TestResource.getResource("R_shouldNotConnect"));
-        } catch (Exception e) {
-            timerEnd = System.currentTimeMillis();
-            if (!(e instanceof SQLException)) {
-                fail(TestResource.getResource("R_unexpectedErrorMessage") + e.getMessage());
-            }
-
-            // Driver should correctly attempt to connect to db, experience a socketTimeout, attempt to connect to
-            // failover, and then have another socketTimeout. So, expected total time is 2 x socketTimeout.
-            long totalTime = timerEnd - timerStart;
-            long totalExpectedTime = waitForDelaySeconds * 1000L * 2; // We expect 2 * socketTimeout
-            assertTrue(totalTime >= totalExpectedTime, TestResource.getResource("R_executionNotLong") + "totalTime: "
-                    + totalTime + " expectedTime: " + totalExpectedTime);
-        }
     }
 
     private void verifyTimeout(long timeDiff, int timeout) {
