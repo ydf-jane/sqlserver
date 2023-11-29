@@ -3123,8 +3123,8 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
         }
 
         // Initialize loop variables
-        int retryAttempt = 0;
-        int tlsRetryAttempt = 0;
+        int attemptNumber = 0;
+        int tlsattemptNumber = 0;
         int driverErrorCode = SQLServerException.DRIVER_ERROR_NONE;
         SQLServerError sqlServerError = null;
 
@@ -3165,9 +3165,9 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                     currentConnectPlaceHolder = currentPrimaryPlaceHolder;
                 }
 
-                if (loggerResiliency.isLoggable(Level.FINE) && retryAttempt > 0) {
+                if (loggerResiliency.isLoggable(Level.FINE) && attemptNumber > 0) {
                     loggerResiliency.fine(toString() + " Connection open - starting connection retry attempt number: "
-                            + retryAttempt);
+                            + attemptNumber);
                 }
 
                 if (loggerResiliency.isLoggable(Level.FINER)) {
@@ -3176,13 +3176,13 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                             + currentConnectPlaceHolder.getPortNumber() + " InstanceName: "
                             + currentConnectPlaceHolder.getInstanceName() + " useParallel: " + useParallel);
                     loggerResiliency.finer(toString() + " Connection open - attempt end time: " + intervalExpire);
-                    loggerResiliency.finer(toString() + " Connection open - attempt number: " + retryAttempt);
+                    loggerResiliency.finer(toString() + " Connection open - attempt number: " + attemptNumber);
                 }
 
                 // Attempt login. Use Place holder to make sure that the failoverdemand is done.
                 InetSocketAddress inetSocketAddress = connectHelper(currentConnectPlaceHolder,
                         timerRemaining(intervalExpire), loginTimeoutSeconds, useParallel, useTnir,
-                        (0 == retryAttempt), /* TNIR 1st attempt */
+                        (0 == attemptNumber), /* TNIR 1st attempt */
                         timerRemaining(intervalExpireFullTimeout)); /* Only used when host resolves to >64 IPs */
 
                 // Successful connection, cache the IP address and port if server supports DNS Cache.
@@ -3223,7 +3223,7 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                     // (in fact it does not matter whether we increase it or not) as
                     // we do not use any timeslicing for multisubnetfailover. However, this
                     // is done just to be consistent with the rest of the logic.
-                    retryAttempt++;
+                    attemptNumber++;
 
                     // useParallel and useTnir should be set to false once we get routed
                     useParallel = false;
@@ -3249,21 +3249,21 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                         continue;
                     }
                 } else {
-                    if (loggerResiliency.isLoggable(Level.FINE) && retryAttempt > 0) {
+                    if (loggerResiliency.isLoggable(Level.FINE) && attemptNumber > 0) {
                         loggerResiliency.fine(toString()
-                                + " Connection open - connection retry succeeded on attempt number: " + retryAttempt);
+                                + " Connection open - connection retry succeeded on attempt number: " + attemptNumber);
                     }
 
                     break; // leave the while loop -- we've successfully connected
                 }
             } catch (SQLServerException e) {
 
-                if (loggerResiliency.isLoggable(Level.FINE) && retryAttempt > 0) {
+                if (loggerResiliency.isLoggable(Level.FINE) && attemptNumber > 0) {
                     loggerResiliency.fine(toString() + " Connection open - connection retry failed on attempt number: "
-                            + retryAttempt);
+                            + attemptNumber);
                 }
 
-                if (loggerResiliency.isLoggable(Level.FINER) && (retryAttempt >= connectRetryCount)) {
+                if (loggerResiliency.isLoggable(Level.FINER) && (attemptNumber >= connectRetryCount)) {
                     loggerResiliency
                             .finer(toString() + " Connection open - connection failed. Maximum connection retry count "
                                     + connectRetryCount + " reached.");
@@ -3281,14 +3281,14 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                         || SQLServerException.DRIVER_ERROR_UNSUPPORTED_CONFIG == driverErrorCode // unsupported config
                                                                                                  // (eg Sphinx, invalid
                                                                                                  // packetsize, etc)
+                        || timerHasExpired(timerExpire) // no time left
                         || (SQLServerException.ERROR_SOCKET_TIMEOUT == driverErrorCode // socket timeout
-                                && ((!isDBMirroring || (retryAttempt > 0) && connectRetryCount != 0))) // If mirroring, only close after failover has been tried (attempt >= 1)
-                        || timerHasExpired(timerExpire) || retryAttempt >= connectRetryCount
-                // for non-dbmirroring cases, do not retry after tcp socket connection succeeds
+                                && (!isDBMirroring || !useTnir || attemptNumber > 0 // for mirroring or TNIR, try at least once
+                                        || (connectRetryCount != 0 && attemptNumber >= connectRetryCount))) // no retries left
                 ) {
                     if (loggerResiliency.isLoggable(Level.FINER)) {
                         loggerResiliency.finer(
-                                toString() + " Connection open - connection failed on attempt: " + retryAttempt + ".");
+                                toString() + " Connection open - connection failed on attempt: " + attemptNumber + ".");
                         loggerResiliency.finer(toString() + " Connection open - connection failure. Driver error code: "
                                 + driverErrorCode);
                         if (null != sqlServerError && !sqlServerError.getErrorMessage().isEmpty()) {
@@ -3304,7 +3304,7 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                 } else {
                     if (loggerResiliency.isLoggable(Level.FINER)) {
                         loggerResiliency.finer(
-                                toString() + " Connection open - connection failed on attempt: " + retryAttempt + ".");
+                                toString() + " Connection open - connection failed on attempt: " + attemptNumber + ".");
                         loggerResiliency.finer(toString() + " Connection open - connection failure. Driver error code: "
                                 + driverErrorCode);
                         if (null != sqlServerError && !sqlServerError.getErrorMessage().isEmpty()) {
@@ -3325,12 +3325,12 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                 // For DB Mirroring, we only sleep after every other attempt.
                 // Also check sleep interval to make sure we won't exceed the timeout
                 long remainingTime = timerRemaining(timerExpire);
-                if ((!isDBMirroring || 1 == retryAttempt % 2
+                if ((!isDBMirroring || 1 == attemptNumber % 2
                         || TimeUnit.SECONDS.toMillis(connectRetryInterval) >= remainingTime)
                         && (remainingTime <= TimeUnit.SECONDS.toMillis(connectRetryInterval))) {
                     if (loggerResiliency.isLoggable(Level.FINER)) {
                         loggerResiliency.finer(
-                                toString() + " Connection open - connection failed on attempt: " + retryAttempt + ".");
+                                toString() + " Connection open - connection failed on attempt: " + attemptNumber + ".");
                         loggerResiliency.finer(toString() + " Connection open - connection failure. Driver error code: "
                                 + driverErrorCode);
                         if (null != sqlServerError && !sqlServerError.getErrorMessage().isEmpty()) {
@@ -3350,17 +3350,17 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
             // We have to sleep for every attempt in case of non-dbMirroring scenarios (including multisubnetfailover),
             // Whereas for dbMirroring, we sleep for every two attempts as each attempt is to a different server.
             if (SQLServerException.DRIVER_ERROR_INTERMITTENT_TLS_FAILED == driverErrorCode
-                    && tlsRetryAttempt < INTERMITTENT_TLS_MAX_RETRY && !timerHasExpired(timerExpire)) {
+                    && tlsattemptNumber < INTERMITTENT_TLS_MAX_RETRY && !timerHasExpired(timerExpire)) {
                 // special case for TLS intermittent failures: no wait retries
-                tlsRetryAttempt++;
+                tlsattemptNumber++;
                 if (loggerResiliency.isLoggable(Level.FINER)) {
                     loggerResiliency.finer(toString()
                             + " Connection open - connection failed during SSL handshake. Retry due to an intermittent TLS 1.2 failure issue. Retry attempt = "
-                            + tlsRetryAttempt + " of " + INTERMITTENT_TLS_MAX_RETRY);
+                            + tlsattemptNumber + " of " + INTERMITTENT_TLS_MAX_RETRY);
                 }
             } else {
-                if (retryAttempt++ < connectRetryCount && TransientError.isTransientError(sqlServerError)
-                        && !timerHasExpired(timerExpire) && (!isDBMirroring || (1 == retryAttempt % 2))) {
+                if (attemptNumber++ < connectRetryCount && TransientError.isTransientError(sqlServerError)
+                        && !timerHasExpired(timerExpire) && (!isDBMirroring || (1 == attemptNumber % 2))) {
                     if (loggerResiliency.isLoggable(Level.FINER)) {
                         loggerResiliency
                                 .finer(toString() + " Connection open - sleeping milisec: " + connectRetryInterval);
@@ -3369,7 +3369,7 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
                         loggerResiliency.finer(toString() + " Connection open - connection failed on transient error "
                                 + (sqlServerError != null ? sqlServerError.getErrorNumber() : "")
                                 + ". Wait for connectRetryInterval(" + connectRetryInterval + ")s before retry #"
-                                + retryAttempt);
+                                + attemptNumber);
                     }
                     System.out.println("sleeping");
                     sleepInterval(TimeUnit.SECONDS.toMillis(connectRetryInterval));
@@ -3378,14 +3378,14 @@ public class SQLServerConnection implements ISQLServerConnection, java.io.Serial
 
             // Update timeout interval (but no more than the point where we're supposed to fail: timerExpire)
             if (useParallel) {
-                intervalExpire = System.currentTimeMillis() + (timeoutUnitInterval * (retryAttempt + 1));
+                intervalExpire = System.currentTimeMillis() + (timeoutUnitInterval * (attemptNumber + 1));
             } else if (isDBMirroring) {
-                intervalExpire = System.currentTimeMillis() + (timeoutUnitInterval * ((retryAttempt / 2) + 1));
+                intervalExpire = System.currentTimeMillis() + (timeoutUnitInterval * ((attemptNumber / 2) + 1));
             } else if (useTnir) {
-                long timeSlice = timeoutUnitInterval * (1 << retryAttempt);
+                long timeSlice = timeoutUnitInterval * (1 << attemptNumber);
 
                 // In case the timeout for the first slice is less than 500 ms then bump it up to 500 ms
-                if ((1 == retryAttempt) && (500 > timeSlice)) {
+                if ((1 == attemptNumber) && (500 > timeSlice)) {
                     timeSlice = 500;
                 }
 
